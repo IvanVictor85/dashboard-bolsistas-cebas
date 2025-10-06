@@ -219,14 +219,14 @@ if not df.empty:
         # Excluir linhas de total
         df_filtrado = df[
             ((df['CODFILIAL'] == codigo_filtro) | (df['CODFILIAL'].isna())) &
-            (~df['CODFILIAL'].astype(str).str.contains('TOTAL', na=False))
+            (~df['CODFILIAL'].astype(str).str.endswith(' Total'))
         ]
         
         # Mostrar informação do filtro aplicado
         st.sidebar.success(f"Filtro aplicado: {filial_selecionada}")
     else:
         # Para "Todas as Filiais", também excluir linhas de total
-        df_filtrado = df[~df['CODFILIAL'].astype(str).str.contains('TOTAL', na=False)]
+        df_filtrado = df[~df['CODFILIAL'].astype(str).str.endswith(' Total')]
         st.sidebar.info("Mostrando dados de todas as filiais")
 else:
     df_filtrado = df
@@ -355,7 +355,7 @@ if not df_filtrado.empty:
         df_com_totais = pd.DataFrame()
         
         # Obter filiais únicas (excluindo totais existentes)
-        df_dados_limpos = df_filtrado[~df_filtrado['CODFILIAL'].astype(str).str.contains('TOTAL', na=False)]
+        df_dados_limpos = df_filtrado[~df_filtrado['CODFILIAL'].astype(str).str.endswith(' Total')]
         filiais_unicas = sorted(df_dados_limpos['CODFILIAL'].dropna().astype(str).unique())
         
         # Colunas numéricas para totalização
@@ -366,6 +366,9 @@ if not df_filtrado.empty:
         # Converter colunas numéricas para inteiros nos dados originais
         df_dados_limpos_copy = df_dados_limpos.copy()
         
+        # Converter CODFILIAL para string para evitar problemas de tipo ao adicionar totais
+        df_dados_limpos_copy['CODFILIAL'] = df_dados_limpos_copy['CODFILIAL'].astype(str)
+        
         # Converter TODAS as colunas numéricas para inteiros (exceto CODFILIAL e NOMECURSO)
         for col in df_dados_limpos_copy.columns:
             if col not in ['CODFILIAL', 'NOMECURSO'] and df_dados_limpos_copy[col].dtype in ['float64', 'float32']:
@@ -375,7 +378,7 @@ if not df_filtrado.empty:
                     pass
         
         for filial in filiais_unicas:
-            # Adicionar cursos da filial
+            # Adicionar cursos da filial (agora ambos são strings)
             cursos_filial = df_dados_limpos_copy[df_dados_limpos_copy['CODFILIAL'] == filial].copy()
             df_com_totais = pd.concat([df_com_totais, cursos_filial], ignore_index=True)
             
@@ -384,9 +387,9 @@ if not df_filtrado.empty:
             total_filial['CODFILIAL'] = f"TOTAL_{filial}"
             
             # Definir nome baseado na filial
-            if filial == 4:
+            if filial == '4':
                 total_filial['NOMECURSO'] = "📊 TOTAL SP"
-            elif filial == 7:
+            elif filial == '7':
                 total_filial['NOMECURSO'] = "📊 TOTAL SC"
             else:
                 total_filial['NOMECURSO'] = f"📊 TOTAL FILIAL {filial}"
@@ -437,14 +440,16 @@ if not df_filtrado.empty:
             else:
                 return [''] * len(row)
         
-        # Exibir tabela com estilo
+        # Exibir tabela de dados completos
         st.dataframe(
             df_com_totais.style.apply(aplicar_estilo_totais, axis=1),
             use_container_width=True
         )
         
     elif tipo_analise == "Conformidade e Alertas":
-        # Tentar gerar dados de conformidade baseados nos dados reais
+        st.header("🚨 Conformidade e Alertas")
+        st.markdown("**Análise de conformidade baseada nos dados reais de bolsistas**")
+        
         dados_conformidade = gerar_dados_conformidade_reais()
 
         if dados_conformidade is not None:
@@ -459,6 +464,36 @@ if not df_filtrado.empty:
             except FileNotFoundError:
                 st.error("❌ Nenhum arquivo de dados encontrado. Verifique se 'dados_bolsistas.xlsx' ou 'dados_conformidade_exemplo.xlsx' estão disponíveis.")
                 st.stop()
+        
+        # Aplicar filtro por filial selecionada se não for "Todas as Filiais"
+        if filial_selecionada != 'Todas as Filiais':
+            # Determinar código da filial
+            if 'São Paulo' in filial_selecionada:
+                codigo_filtro = '4'
+            elif 'Espírito Santo' in filial_selecionada:
+                codigo_filtro = '7'
+            
+            # Filtrar dados detalhados por filial
+            if 'CODFILIAL' in df_detalhado.columns:
+                df_detalhado = df_detalhado[df_detalhado['CODFILIAL'] == codigo_filtro]
+                
+                # Recalcular dados de conformidade agregados para a filial selecionada
+                df_conformidade = df_detalhado.groupby('NOMECURSO').agg({
+                    'PROUNI_SOBRA_FALTA': 'sum',
+                    'FILANTROPIA_SOBRA_FALTA': 'sum'
+                }).reset_index()
+                
+                # Converter para inteiros
+                df_conformidade['PROUNI_SOBRA_FALTA'] = df_conformidade['PROUNI_SOBRA_FALTA'].fillna(0).round().astype(int)
+                df_conformidade['FILANTROPIA_SOBRA_FALTA'] = df_conformidade['FILANTROPIA_SOBRA_FALTA'].fillna(0).round().astype(int)
+                
+                st.info(f"📍 Dados filtrados para: {filial_selecionada}")
+            else:
+                st.warning("⚠️ Dados de filial não disponíveis para filtro")
+        
+        # Adicionar colunas de conformidade "Atende" e "Não Atende"
+        df_conformidade['PROUNI_Atende'] = df_conformidade['PROUNI_SOBRA_FALTA'].apply(lambda x: 'Atende' if x >= 0 else 'Não Atende')
+        df_conformidade['FILANTROPIA_Atende'] = df_conformidade['FILANTROPIA_SOBRA_FALTA'].apply(lambda x: 'Atende' if x >= 0 else 'Não Atende')
             
         # --- KPIs de Alertas ---
         st.subheader("🚨 Indicadores de Conformidade")
@@ -535,10 +570,23 @@ if not df_filtrado.empty:
             else:
                 return 'background-color: #d1ecf1; color: #0c5460'  # Azul claro
         
+        def aplicar_estilo_atende(val):
+            if val == 'Atende':
+                return 'background-color: #d4edda; color: #155724; font-weight: bold'  # Verde
+            elif val == 'Não Atende':
+                return 'background-color: #f8d7da; color: #721c24; font-weight: bold'  # Vermelho
+            else:
+                return ''
+        
         # Verificar se df_detalhado existe e tem a coluna CODFILIAL
-        if 'df_detalhado' in locals() and df_detalhado is not None and 'CODFILIAL' in df_detalhado.columns:
+        if 'df_detalhado' in locals() and df_detalhado is not None and 'CODFILIAL' in df_detalhado.columns and not df_detalhado.empty:
             # Usar dados detalhados com informações de filial
             df_display = df_detalhado.copy()
+            
+            # Adicionar colunas de conformidade aos dados detalhados
+            df_display['PROUNI_Atende'] = df_display['PROUNI_SOBRA_FALTA'].apply(lambda x: 'Atende' if x >= 0 else 'Não Atende')
+            df_display['FILANTROPIA_Atende'] = df_display['FILANTROPIA_SOBRA_FALTA'].apply(lambda x: 'Atende' if x >= 0 else 'Não Atende')
+            
             filiais_unicas = sorted(df_display['CODFILIAL'].dropna().astype(str).unique())
             
             # Criar lista para dados reorganizados
@@ -558,7 +606,9 @@ if not df_filtrado.empty:
                     'CODFILIAL': f'TOTAL_{filial}',
                     'NOMECURSO': f'📊 TOTAL FILIAL {filial}',
                     'PROUNI_SOBRA_FALTA': total_prouni,
-                    'FILANTROPIA_SOBRA_FALTA': total_filantropia
+                    'FILANTROPIA_SOBRA_FALTA': total_filantropia,
+                    'PROUNI_Atende': 'Atende' if total_prouni >= 0 else 'Não Atende',
+                    'FILANTROPIA_Atende': 'Atende' if total_filantropia >= 0 else 'Não Atende'
                 }
                 # Adicionar outras colunas se existirem
                 for col in df_display.columns:
@@ -567,25 +617,40 @@ if not df_filtrado.empty:
                 
                 dados_reorganizados.append(linha_total_filial)
             
-            # Adicionar total geral no final
-            total_geral_prouni = int(df_display['PROUNI_SOBRA_FALTA'].sum())
-            total_geral_filantropia = int(df_display['FILANTROPIA_SOBRA_FALTA'].sum())
-            
-            linha_total_geral = {
-                'CODFILIAL': 'GERAL',
-                'NOMECURSO': '🎯 TOTAL GERAL',
-                'PROUNI_SOBRA_FALTA': total_geral_prouni,
-                'FILANTROPIA_SOBRA_FALTA': total_geral_filantropia
-            }
-            # Adicionar outras colunas se existirem
-            for col in df_display.columns:
-                if col not in linha_total_geral:
-                    linha_total_geral[col] = ''
-            
-            dados_reorganizados.append(linha_total_geral)
+            # Adicionar total geral no final se houver mais de uma filial
+            if len(filiais_unicas) > 1:
+                total_geral_prouni = int(df_display['PROUNI_SOBRA_FALTA'].sum())
+                total_geral_filantropia = int(df_display['FILANTROPIA_SOBRA_FALTA'].sum())
+                
+                linha_total_geral = {
+                    'CODFILIAL': 'GERAL',
+                    'NOMECURSO': '🎯 TOTAL GERAL',
+                    'PROUNI_SOBRA_FALTA': total_geral_prouni,
+                    'FILANTROPIA_SOBRA_FALTA': total_geral_filantropia,
+                    'PROUNI_Atende': 'Atende' if total_geral_prouni >= 0 else 'Não Atende',
+                    'FILANTROPIA_Atende': 'Atende' if total_geral_filantropia >= 0 else 'Não Atende'
+                }
+                # Adicionar outras colunas se existirem
+                for col in df_display.columns:
+                    if col not in linha_total_geral:
+                        linha_total_geral[col] = ''
+                
+                dados_reorganizados.append(linha_total_geral)
             
             # Criar DataFrame final reorganizado
             df_final = pd.DataFrame(dados_reorganizados)
+            
+            # Definir ordem padrão das colunas
+            colunas_ordenadas = ['NOMECURSO', 'PROUNI_SOBRA_FALTA', 'PROUNI_Atende', 'FILANTROPIA_SOBRA_FALTA', 'FILANTROPIA_Atende']
+            
+            # Verificar quais colunas existem no DataFrame
+            colunas_existentes = [col for col in colunas_ordenadas if col in df_final.columns]
+            
+            # Adicionar outras colunas que possam existir (como CODFILIAL) no final
+            outras_colunas = [col for col in df_final.columns if col not in colunas_ordenadas]
+            
+            # Reorganizar DataFrame com a ordem desejada
+            df_final = df_final[colunas_existentes + outras_colunas]
             
             # Aplicar estilo especial para linhas de total
             def aplicar_estilo_linha(row):
@@ -606,6 +671,11 @@ if not df_filtrado.empty:
                                 styles[i] = 'background-color: #f8d7da; color: #721c24'
                             else:
                                 styles[i] = 'background-color: #d1ecf1; color: #0c5460'
+                        elif col_name in ['PROUNI_Atende', 'FILANTROPIA_Atende']:
+                            if val == 'Atende':
+                                styles[i] = 'background-color: #d4edda; color: #155724; font-weight: bold'
+                            elif val == 'Não Atende':
+                                styles[i] = 'background-color: #f8d7da; color: #721c24; font-weight: bold'
                 
                 return styles
             
@@ -613,14 +683,29 @@ if not df_filtrado.empty:
             df_styled = df_final.style.apply(aplicar_estilo_linha, axis=1)
             
         else:
-            # Caso não tenha coluna de filial, usar estilo original
-            df_styled = df_conformidade.style.map(
-                aplicar_estilo_conformidade, 
-                subset=['PROUNI_SOBRA_FALTA', 'FILANTROPIA_SOBRA_FALTA']
-            )
+            # Caso não tenha dados detalhados ou estejam vazios, usar dados de conformidade agregados
+            if not df_conformidade.empty:
+                # Reorganizar colunas para melhor visualização
+                colunas_ordenadas = ['NOMECURSO', 'PROUNI_SOBRA_FALTA', 'PROUNI_Atende', 'FILANTROPIA_SOBRA_FALTA', 'FILANTROPIA_Atende']
+                df_display = df_conformidade[colunas_ordenadas].copy()
+                
+                # Aplicar estilo
+                df_styled = df_display.style.map(
+                    aplicar_estilo_conformidade, 
+                    subset=['PROUNI_SOBRA_FALTA', 'FILANTROPIA_SOBRA_FALTA']
+                ).map(
+                    aplicar_estilo_atende,
+                    subset=['PROUNI_Atende', 'FILANTROPIA_Atende']
+                )
+            else:
+                st.error("❌ Nenhum dado de conformidade disponível para exibição")
+                df_styled = None
         
         # Exibir a tabela estilizada
-        st.dataframe(df_styled, width='stretch')
+        if df_styled is not None:
+            st.dataframe(df_styled, use_container_width=True)
+        else:
+            st.warning("⚠️ Tabela não pode ser exibida - dados indisponíveis")
 
         # --- Resumo Estatístico ---
         st.markdown("---")
@@ -867,15 +952,12 @@ if not df_filtrado.empty:
                 st.subheader("🎯 Projeção de Necessidades")
                 
                 necessidade_bolsas = total_bolsas_perdidas
-                investimento_estimado = necessidade_bolsas * 500  # Estimativa de R$ 500 por bolsa/mês
                 
                 col1, col2 = st.columns(2)
                 with col1:
                     st.info(f"""
                     **📊 Necessidades Projetadas:**
                     - **Novas bolsas necessárias:** {int(necessidade_bolsas):,}
-                    - **Investimento estimado/mês:** R$ {int(investimento_estimado):,}
-                    - **Investimento anual:** R$ {int(investimento_estimado * 12):,}
                     """.replace(",", "."))
                 
                 with col2:

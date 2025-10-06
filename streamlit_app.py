@@ -867,15 +867,12 @@ if not df_filtrado.empty:
                 st.subheader("🎯 Projeção de Necessidades")
                 
                 necessidade_bolsas = total_bolsas_perdidas
-                investimento_estimado = necessidade_bolsas * 500  # Estimativa de R$ 500 por bolsa/mês
                 
                 col1, col2 = st.columns(2)
                 with col1:
                     st.info(f"""
                     **📊 Necessidades Projetadas:**
                     - **Novas bolsas necessárias:** {int(necessidade_bolsas):,}
-                    - **Investimento estimado/mês:** R$ {int(investimento_estimado):,}
-                    - **Investimento anual:** R$ {int(investimento_estimado * 12):,}
                     """.replace(",", "."))
                 
                 with col2:
